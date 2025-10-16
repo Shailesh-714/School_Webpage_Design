@@ -21,14 +21,14 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
       with:
-        python-version: '3.11'
+        node-version: '18'
 
     - name: Install dependencies
       run: |
-        pip install toml pyyaml requests
+        npm install yaml @iarna/toml
 
     - name: Fetch integration_test.toml from hyperswitch repo
       run: |
@@ -44,111 +44,115 @@ jobs:
 
     - name: Compare TOML files and update YAML
       run: |
-        python3 << 'EOF'
-        import toml
-        import yaml
-        import os
-        from collections import defaultdict
-        import sys
+        node << 'EOF'
+        const fs = require('fs');
+        const YAML = require('yaml');
+        const TOML = require('@iarna/toml');
 
-        def deep_merge_dict(base_dict, new_dict, path=""):
-            """Deep merge two dictionaries and track changes"""
-            changes = {}
+        function deepMergeDict(baseDict, newDict, path = "") {
+          const changes = {};
 
-            for key, value in new_dict.items():
-                current_path = f"{path}.{key}" if path else key
+          for (const [key, value] of Object.entries(newDict)) {
+            const currentPath = path ? `${path}.${key}` : key;
 
-                if key not in base_dict:
-                    # New key added
-                    changes[key] = value
-                    print(f"NEW: {current_path} = {value}")
-                elif isinstance(value, dict) and isinstance(base_dict[key], dict):
-                    # Recursively merge nested dictionaries
-                    nested_changes = deep_merge_dict(base_dict[key], value, current_path)
-                    if nested_changes:
-                        changes[key] = nested_changes
-                elif base_dict[key] != value:
-                    # Value changed
-                    changes[key] = value
-                    print(f"CHANGED: {current_path} = {value} (was: {base_dict[key]})")
+            if (!(key in baseDict)) {
+              // New key added
+              changes[key] = value;
+              console.log(`NEW: ${currentPath} = ${JSON.stringify(value)}`);
+            } else if (typeof value === 'object' && value !== null && !Array.isArray(value) &&
+                       typeof baseDict[key] === 'object' && baseDict[key] !== null && !Array.isArray(baseDict[key])) {
+              // Recursively merge nested objects
+              const nestedChanges = deepMergeDict(baseDict[key], value, currentPath);
+              if (Object.keys(nestedChanges).length > 0) {
+                changes[key] = nestedChanges;
+              }
+            } else if (JSON.stringify(baseDict[key]) !== JSON.stringify(value)) {
+              // Value changed
+              changes[key] = value;
+              console.log(`CHANGED: ${currentPath} = ${JSON.stringify(value)} (was: ${JSON.stringify(baseDict[key])})`);
+            }
+          }
 
-            return changes
+          return changes;
+        }
 
-        def merge_nested_dicts(target, source):
-            """Merge nested dictionaries while preserving structure"""
-            for key, value in source.items():
-                if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                    merge_nested_dicts(target[key], value)
-                else:
-                    target[key] = value
-            return target
+        function mergeNestedDicts(target, source) {
+          for (const [key, value] of Object.entries(source)) {
+            if (key in target && typeof target[key] === 'object' && target[key] !== null && !Array.isArray(target[key]) &&
+                typeof value === 'object' && value !== null && !Array.isArray(value)) {
+              mergeNestedDicts(target[key], value);
+            } else {
+              target[key] = value;
+            }
+          }
+          return target;
+        }
 
-        try:
-            # Load TOML files
-            print("Loading integration_test.toml...")
-            with open('integration_test.toml', 'r') as f:
-                integration_config = toml.load(f)
+        function countChanges(obj) {
+          let count = 0;
+          for (const [key, value] of Object.entries(obj)) {
+            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+              count += countChanges(value);
+            } else {
+              count += 1;
+            }
+          }
+          return count;
+        }
 
-            print("Loading router-integ.toml...")
-            with open('router-integ.toml', 'r') as f:
-                router_config = toml.load(f)
+        try {
+          // Load TOML files
+          console.log("Loading integration_test.toml...");
+          const integrationToml = fs.readFileSync('integration_test.toml', 'utf8');
+          const integrationConfig = TOML.parse(integrationToml);
 
-            # Find differences
-            print("Comparing configurations...")
-            changes = deep_merge_dict(router_config, integration_config)
+          console.log("Loading router-integ.toml...");
+          const routerToml = fs.readFileSync('router-integ.toml', 'utf8');
+          const routerConfig = TOML.parse(routerToml);
 
-            if not changes:
-                print("No changes detected between files.")
-                sys.exit(0)
+          // Find differences
+          console.log("Comparing configurations...");
+          const changes = deepMergeDict(routerConfig, integrationConfig);
 
-            print(f"Found changes: {changes}")
+          if (Object.keys(changes).length === 0) {
+            console.log("No changes detected between files.");
+            process.exit(0);
+          }
 
-            # Load existing YAML file
-            yaml_file_path = 'configs/hyperswitch-app/additional-configs/integ-values.yaml'
-            with open(yaml_file_path, 'r') as f:
-                yaml_content = yaml.safe_load(f) or {}
+          console.log(`Found changes:`, JSON.stringify(changes, null, 2));
 
-            # Ensure structure exists
-            if 'server' not in yaml_content:
-                yaml_content['server'] = {}
-            if 'additional_configs' not in yaml_content['server']:
-                yaml_content['server']['additional_configs'] = {}
+          // Load existing YAML file
+          const yamlFilePath = 'configs/hyperswitch-app/additional-configs/integ-values.yaml';
+          const yamlContent = YAML.parse(fs.readFileSync(yamlFilePath, 'utf8')) || {};
 
-            # Merge changes while preserving nested structure
-            merge_nested_dicts(yaml_content['server']['additional_configs'], changes)
-            print(f"Merged {len(changes)} top-level configuration sections into YAML")
+          // Ensure structure exists
+          if (!yamlContent.server) {
+            yamlContent.server = {};
+          }
+          if (!yamlContent.server.additional_configs) {
+            yamlContent.server.additional_configs = {};
+          }
 
-            # Write back to YAML file
-            with open(yaml_file_path, 'w') as f:
-                yaml.dump(yaml_content, f, default_flow_style=False, sort_keys=True, indent=2)
+          // Merge changes while preserving nested structure
+          mergeNestedDicts(yamlContent.server.additional_configs, changes);
+          console.log(`Merged ${Object.keys(changes).length} top-level configuration sections into YAML`);
 
-            # Count total number of changed configuration keys
-            def count_changes(d):
-                count = 0
-                for key, value in d.items():
-                    if isinstance(value, dict):
-                        count += count_changes(value)
-                    else:
-                        count += 1
-                return count
+          // Write back to YAML file
+          fs.writeFileSync(yamlFilePath, YAML.stringify(yamlContent, { indent: 2 }));
 
-            total_changes = count_changes(changes)
-            print(f"Updated {yaml_file_path} with {total_changes} configuration changes")
+          // Count total number of changed configuration keys
+          const totalChanges = countChanges(changes);
+          console.log(`Updated ${yamlFilePath} with ${totalChanges} configuration changes`);
 
-            # Set output for commit message
-            with open('GITHUB_OUTPUT', 'a') as f:
-                f.write(f"changes_count={total_changes}\n")
-                f.write(f"has_changes=true\n")
+          // Set output for commit message
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `changes_count=${totalChanges}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `has_changes=true\n`);
 
-        except FileNotFoundError as e:
-            print(f"Error: Could not find file {e.filename}")
-            sys.exit(1)
-        except Exception as e:
-            print(f"Error processing files: {str(e)}")
-            sys.exit(1)
+        } catch (error) {
+          console.error(`Error processing files: ${error.message}`);
+          process.exit(1);
+        }
         EOF
-      env:
-        GITHUB_OUTPUT: $GITHUB_OUTPUT
 
     - name: Check for changes
       id: git-check
