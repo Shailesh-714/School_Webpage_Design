@@ -28,14 +28,14 @@ jobs:
 
     - name: Fetch integration_test.toml from hyperswitch repo
       run: |
-        curl -s -H "Accept: application/vnd.github.v3.raw" \
-          "https://api.github.com/repos/juspay/hyperswitch/contents/config/deployments/integration_test.toml" \
+        echo "Fetching integration_test.toml..."
+        curl -s -f -L "https://raw.githubusercontent.com/juspay/hyperswitch/main/config/deployments/integration_test.toml" \
           -o integration_test.toml
 
     - name: Fetch router-integ.toml from hyperswitch-helm repo
       run: |
-        curl -s -H "Accept: application/vnd.github.v3.raw" \
-          "https://api.github.com/repos/juspay/hyperswitch-helm/contents/charts/incubator/hyperswitch-app/configs/router-integ.toml" \
+        echo "Fetching router-integ.toml..."
+        curl -s -f -L "https://raw.githubusercontent.com/juspay/hyperswitch-helm/main/charts/incubator/hyperswitch-app/configs/router-integ.toml" \
           -o router-integ.toml
 
     - name: Compare TOML files and update YAML
