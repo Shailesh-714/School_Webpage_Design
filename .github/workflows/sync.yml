@@ -39,7 +39,7 @@ jobs:
     - name: Fetch router-integ.toml from hyperswitch-helm repo
       run: |
         echo "Fetching router-integ.toml..."
-        curl -s -f -L "https://raw.githubusercontent.com/juspay/hyperswitch-helm/main/charts/incubator/hyperswitch-app/configs/router-integ.toml" \
+        curl -s -f -L "https://raw.githubusercontent.com/juspay/hyperswitch-helm/argocd/charts/incubator/hyperswitch-app/configs/router-integ.toml" \
           -o router-integ.toml
 
     - name: Compare TOML files and update YAML
