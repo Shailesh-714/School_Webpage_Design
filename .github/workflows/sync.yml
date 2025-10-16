@@ -39,7 +39,7 @@ jobs:
     - name: Fetch router-integ.toml from hyperswitch-helm repo
       run: |
         echo "Fetching router-integ.toml..."
-        curl -s -f -L "https://raw.githubusercontent.com/juspay/hyperswitch-helm/argocd/charts/incubator/hyperswitch-app/configs/router-integ.toml" \
+        curl -s -f -L "https://raw.githubusercontent.com/juspay/hyperswitch-helm/main/charts/incubator/hyperswitch-app/configs/router-integ.toml" \
           -o router-integ.toml
 
     - name: Compare TOML files and update YAML
@@ -74,16 +74,14 @@ jobs:
 
             return changes
 
-        def flatten_dict(d, parent_key='', sep='_'):
-            """Flatten nested dictionary for YAML output"""
-            items = []
-            for k, v in d.items():
-                new_key = f"{parent_key}{sep}{k}" if parent_key else k
-                if isinstance(v, dict):
-                    items.extend(flatten_dict(v, new_key, sep=sep).items())
+        def merge_nested_dicts(target, source):
+            """Merge nested dictionaries while preserving structure"""
+            for key, value in source.items():
+                if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                    merge_nested_dicts(target[key], value)
                 else:
-                    items.append((new_key, v))
-            return dict(items)
+                    target[key] = value
+            return target
 
         try:
             # Load TOML files
@@ -116,23 +114,30 @@ jobs:
             if 'additional_configs' not in yaml_content['server']:
                 yaml_content['server']['additional_configs'] = {}
 
-            # Convert changes to flat structure for YAML
-            flattened_changes = flatten_dict(changes)
-
-            # Update the additional_configs section
-            for key, value in flattened_changes.items():
-                yaml_content['server']['additional_configs'][key] = value
-                print(f"Added to YAML: {key} = {value}")
+            # Merge changes while preserving nested structure
+            merge_nested_dicts(yaml_content['server']['additional_configs'], changes)
+            print(f"Merged {len(changes)} top-level configuration sections into YAML")
 
             # Write back to YAML file
             with open(yaml_file_path, 'w') as f:
                 yaml.dump(yaml_content, f, default_flow_style=False, sort_keys=True, indent=2)
 
-            print(f"Updated {yaml_file_path} with {len(flattened_changes)} changes")
+            # Count total number of changed configuration keys
+            def count_changes(d):
+                count = 0
+                for key, value in d.items():
+                    if isinstance(value, dict):
+                        count += count_changes(value)
+                    else:
+                        count += 1
+                return count
+
+            total_changes = count_changes(changes)
+            print(f"Updated {yaml_file_path} with {total_changes} configuration changes")
 
             # Set output for commit message
             with open('GITHUB_OUTPUT', 'a') as f:
-                f.write(f"changes_count={len(flattened_changes)}\n")
+                f.write(f"changes_count={total_changes}\n")
                 f.write(f"has_changes=true\n")
 
         except FileNotFoundError as e:
