@@ -1,0 +1,179 @@
+name: Sync Integration Configs
+
+on:
+  schedule:
+    # Run daily at 6:00 AM UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync-configs:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install toml pyyaml requests
+
+    - name: Fetch integration_test.toml from hyperswitch repo
+      run: |
+        curl -s -H "Accept: application/vnd.github.v3.raw" \
+          "https://api.github.com/repos/juspay/hyperswitch/contents/config/deployments/integration_test.toml" \
+          -o integration_test.toml
+
+    - name: Fetch router-integ.toml from hyperswitch-helm repo
+      run: |
+        curl -s -H "Accept: application/vnd.github.v3.raw" \
+          "https://api.github.com/repos/juspay/hyperswitch-helm/contents/charts/incubator/hyperswitch-app/configs/router-integ.toml" \
+          -o router-integ.toml
+
+    - name: Compare TOML files and update YAML
+      run: |
+        python3 << 'EOF'
+        import toml
+        import yaml
+        import os
+        from collections import defaultdict
+        import sys
+
+        def deep_merge_dict(base_dict, new_dict, path=""):
+            """Deep merge two dictionaries and track changes"""
+            changes = {}
+
+            for key, value in new_dict.items():
+                current_path = f"{path}.{key}" if path else key
+
+                if key not in base_dict:
+                    # New key added
+                    changes[key] = value
+                    print(f"NEW: {current_path} = {value}")
+                elif isinstance(value, dict) and isinstance(base_dict[key], dict):
+                    # Recursively merge nested dictionaries
+                    nested_changes = deep_merge_dict(base_dict[key], value, current_path)
+                    if nested_changes:
+                        changes[key] = nested_changes
+                elif base_dict[key] != value:
+                    # Value changed
+                    changes[key] = value
+                    print(f"CHANGED: {current_path} = {value} (was: {base_dict[key]})")
+
+            return changes
+
+        def flatten_dict(d, parent_key='', sep='_'):
+            """Flatten nested dictionary for YAML output"""
+            items = []
+            for k, v in d.items():
+                new_key = f"{parent_key}{sep}{k}" if parent_key else k
+                if isinstance(v, dict):
+                    items.extend(flatten_dict(v, new_key, sep=sep).items())
+                else:
+                    items.append((new_key, v))
+            return dict(items)
+
+        try:
+            # Load TOML files
+            print("Loading integration_test.toml...")
+            with open('integration_test.toml', 'r') as f:
+                integration_config = toml.load(f)
+
+            print("Loading router-integ.toml...")
+            with open('router-integ.toml', 'r') as f:
+                router_config = toml.load(f)
+
+            # Find differences
+            print("Comparing configurations...")
+            changes = deep_merge_dict(router_config, integration_config)
+
+            if not changes:
+                print("No changes detected between files.")
+                sys.exit(0)
+
+            print(f"Found changes: {changes}")
+
+            # Load existing YAML file
+            yaml_file_path = 'configs/hyperswitch-app/additional-configs/integ-values.yaml'
+            with open(yaml_file_path, 'r') as f:
+                yaml_content = yaml.safe_load(f) or {}
+
+            # Ensure structure exists
+            if 'server' not in yaml_content:
+                yaml_content['server'] = {}
+            if 'additional_configs' not in yaml_content['server']:
+                yaml_content['server']['additional_configs'] = {}
+
+            # Convert changes to flat structure for YAML
+            flattened_changes = flatten_dict(changes)
+
+            # Update the additional_configs section
+            for key, value in flattened_changes.items():
+                yaml_content['server']['additional_configs'][key] = value
+                print(f"Added to YAML: {key} = {value}")
+
+            # Write back to YAML file
+            with open(yaml_file_path, 'w') as f:
+                yaml.dump(yaml_content, f, default_flow_style=False, sort_keys=True, indent=2)
+
+            print(f"Updated {yaml_file_path} with {len(flattened_changes)} changes")
+
+            # Set output for commit message
+            with open('GITHUB_OUTPUT', 'a') as f:
+                f.write(f"changes_count={len(flattened_changes)}\n")
+                f.write(f"has_changes=true\n")
+
+        except FileNotFoundError as e:
+            print(f"Error: Could not find file {e.filename}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error processing files: {str(e)}")
+            sys.exit(1)
+        EOF
+      env:
+        GITHUB_OUTPUT: $GITHUB_OUTPUT
+
+    - name: Check for changes
+      id: git-check
+      run: |
+        git diff --exit-code configs/hyperswitch-app/additional-configs/integ-values.yaml || echo "changes=true" >> $GITHUB_OUTPUT
+
+    - name: Commit and push changes
+      if: steps.git-check.outputs.changes == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add configs/hyperswitch-app/additional-configs/integ-values.yaml
+        git commit -m "chore: sync integration configs from upstream
+
+        - Updated integration configs based on hyperswitch/integration_test.toml
+        - Compared against hyperswitch-helm/router-integ.toml
+        - Added new/changed configurations to additional_configs
+
+        🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+        Co-Authored-By: Claude <noreply@anthropic.com>"
+        git push
+
+    - name: Create summary
+      if: always()
+      run: |
+        echo "## Integration Config Sync Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Source**: hyperswitch/config/deployments/integration_test.toml" >> $GITHUB_STEP_SUMMARY
+        echo "- **Baseline**: hyperswitch-helm/charts/incubator/hyperswitch-app/configs/router-integ.toml" >> $GITHUB_STEP_SUMMARY
+        echo "- **Target**: configs/hyperswitch-app/additional-configs/integ-values.yaml" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ steps.git-check.outputs.changes }}" == "true" ]; then
+          echo "✅ **Status**: Changes detected and committed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "ℹ️ **Status**: No changes detected" >> $GITHUB_STEP_SUMMARY
+        fi
