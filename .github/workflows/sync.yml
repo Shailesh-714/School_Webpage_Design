@@ -2,18 +2,15 @@ name: Sync Integration Configs
 
 on:
   schedule:
-    # Run daily at 6:00 AM UTC
-    - cron: '0 6 * * *'
-  workflow_dispatch: # Allow manual trigger
+    - cron: '0 6 * * *'  # Daily at 6 AM UTC
+  workflow_dispatch:
 
 permissions:
-  contents: write  # Required to push commits
-  actions: read    # Required to read workflow files
+  contents: write
 
 jobs:
   sync-configs:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -30,163 +27,29 @@ jobs:
       run: |
         npm install yaml @iarna/toml
 
-    - name: Fetch integration_test.toml from hyperswitch repo
+    - name: Sync TOML config
       run: |
-        echo "Fetching integration_test.toml..."
-        curl -s -f -L "https://raw.githubusercontent.com/juspay/hyperswitch/main/config/deployments/integration_test.toml" \
-          -o integration_test.toml
+        # Fetch TOML content
+        curl -sL "https://raw.githubusercontent.com/juspay/hyperswitch/main/config/deployments/integration_test.toml" > integration_test.toml
 
-    - name: Fetch router-integ.toml from hyperswitch-helm repo
-      run: |
-        echo "Fetching router-integ.toml..."
-        curl -s -f -L "https://raw.githubusercontent.com/juspay/hyperswitch-helm/argocd/charts/incubator/hyperswitch-app/configs/router-integ.toml" \
-          -o router-integ.toml
-
-    - name: Compare TOML files and update YAML
-      run: |
-        node << 'EOF'
+        # Update YAML file
+        node -e "
         const fs = require('fs');
         const YAML = require('yaml');
-        const TOML = require('@iarna/toml');
 
-        function deepMergeDict(baseDict, newDict, path = "") {
-          const changes = {};
+        const tomlContent = fs.readFileSync('integration_test.toml', 'utf8');
+        const yamlContent = YAML.parse(fs.readFileSync('configs/hyperswitch-app/additional-configs/integ-values.yaml', 'utf8')) || {};
 
-          for (const [key, value] of Object.entries(newDict)) {
-            const currentPath = path ? `${path}.${key}` : key;
+        yamlContent.server = yamlContent.server || {};
+        yamlContent.server.additional_configs = tomlContent;
 
-            if (!(key in baseDict)) {
-              // New key added
-              changes[key] = value;
-              console.log(`NEW: ${currentPath} = ${JSON.stringify(value)}`);
-            } else if (typeof value === 'object' && value !== null && !Array.isArray(value) &&
-                       typeof baseDict[key] === 'object' && baseDict[key] !== null && !Array.isArray(baseDict[key])) {
-              // Recursively merge nested objects
-              const nestedChanges = deepMergeDict(baseDict[key], value, currentPath);
-              if (Object.keys(nestedChanges).length > 0) {
-                changes[key] = nestedChanges;
-              }
-            } else if (JSON.stringify(baseDict[key]) !== JSON.stringify(value)) {
-              // Value changed
-              changes[key] = value;
-              console.log(`CHANGED: ${currentPath} = ${JSON.stringify(value)} (was: ${JSON.stringify(baseDict[key])})`);
-            }
-          }
+        fs.writeFileSync('configs/hyperswitch-app/additional-configs/integ-values.yaml', YAML.stringify(yamlContent, { indent: 2 }));
+        "
 
-          return changes;
-        }
-
-        function mergeNestedDicts(target, source) {
-          for (const [key, value] of Object.entries(source)) {
-            if (key in target && typeof target[key] === 'object' && target[key] !== null && !Array.isArray(target[key]) &&
-                typeof value === 'object' && value !== null && !Array.isArray(value)) {
-              mergeNestedDicts(target[key], value);
-            } else {
-              target[key] = value;
-            }
-          }
-          return target;
-        }
-
-        function countChanges(obj) {
-          let count = 0;
-          for (const [key, value] of Object.entries(obj)) {
-            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-              count += countChanges(value);
-            } else {
-              count += 1;
-            }
-          }
-          return count;
-        }
-
-        try {
-          // Load TOML files
-          console.log("Loading integration_test.toml...");
-          const integrationToml = fs.readFileSync('integration_test.toml', 'utf8');
-          const integrationConfig = TOML.parse(integrationToml);
-
-          console.log("Loading router-integ.toml...");
-          const routerToml = fs.readFileSync('router-integ.toml', 'utf8');
-          const routerConfig = TOML.parse(routerToml);
-
-          // Find differences
-          console.log("Comparing configurations...");
-          const changes = deepMergeDict(routerConfig, integrationConfig);
-
-          if (Object.keys(changes).length === 0) {
-            console.log("No changes detected between files.");
-            process.exit(0);
-          }
-
-          console.log(`Found changes:`, JSON.stringify(changes, null, 2));
-
-          // Load existing YAML file
-          const yamlFilePath = 'configs/hyperswitch-app/additional-configs/integ-values.yaml';
-          const yamlContent = YAML.parse(fs.readFileSync(yamlFilePath, 'utf8')) || {};
-
-          // Ensure structure exists
-          if (!yamlContent.server) {
-            yamlContent.server = {};
-          }
-          if (!yamlContent.server.additional_configs) {
-            yamlContent.server.additional_configs = {};
-          }
-
-          // Merge changes while preserving nested structure
-          mergeNestedDicts(yamlContent.server.additional_configs, changes);
-          console.log(`Merged ${Object.keys(changes).length} top-level configuration sections into YAML`);
-
-          // Write back to YAML file
-          fs.writeFileSync(yamlFilePath, YAML.stringify(yamlContent, { indent: 2 }));
-
-          // Count total number of changed configuration keys
-          const totalChanges = countChanges(changes);
-          console.log(`Updated ${yamlFilePath} with ${totalChanges} configuration changes`);
-
-          // Set output for commit message
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `changes_count=${totalChanges}\n`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `has_changes=true\n`);
-
-        } catch (error) {
-          console.error(`Error processing files: ${error.message}`);
-          process.exit(1);
-        }
-        EOF
-
-    - name: Check for changes
-      id: git-check
-      run: |
-        git diff --exit-code configs/hyperswitch-app/additional-configs/integ-values.yaml || echo "changes=true" >> $GITHUB_OUTPUT
-
-    - name: Commit and push changes
-      if: steps.git-check.outputs.changes == 'true'
+    - name: Commit changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add configs/hyperswitch-app/additional-configs/integ-values.yaml
-        git commit -m "chore: sync integration configs from upstream
-
-        - Updated integration configs based on hyperswitch/integration_test.toml
-        - Compared against hyperswitch-helm/router-integ.toml
-        - Added new/changed configurations to additional_configs
-
-        🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-        Co-Authored-By: Claude <noreply@anthropic.com>"
+        git diff --staged --quiet || git commit -m "chore: sync integration configs"
         git push
-
-    - name: Create summary
-      if: always()
-      run: |
-        echo "## Integration Config Sync Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Source**: hyperswitch/config/deployments/integration_test.toml" >> $GITHUB_STEP_SUMMARY
-        echo "- **Baseline**: hyperswitch-helm/charts/incubator/hyperswitch-app/configs/router-integ.toml" >> $GITHUB_STEP_SUMMARY
-        echo "- **Target**: configs/hyperswitch-app/additional-configs/integ-values.yaml" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ steps.git-check.outputs.changes }}" == "true" ]; then
-          echo "✅ **Status**: Changes detected and committed" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "ℹ️ **Status**: No changes detected" >> $GITHUB_STEP_SUMMARY
-        fi
