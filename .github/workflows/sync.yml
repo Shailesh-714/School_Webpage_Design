@@ -42,12 +42,16 @@ jobs:
       - name: Check for changes
         id: check_changes
         run: |
-          if git diff --quiet; then
+          # Check for both tracked file changes and untracked files
+          if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
             echo "No changes detected"
             echo "changes=false" >> $GITHUB_OUTPUT
           else
             echo "Changes detected"
             echo "changes=true" >> $GITHUB_OUTPUT
+            # Show what changed for debugging
+            echo "Git status:"
+            git status --porcelain
           fi
 
       - name: Generate dated tag
