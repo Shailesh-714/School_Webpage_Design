@@ -8,7 +8,7 @@ on:
     # Allow manual triggering with branch selection
     inputs:
       hyperswitch_branch:
-        description: 'Branch or tag of hyperswitch repository (e.g., main, develop, v1.2.3). If not specified, uses latest dated tag.'
+        description: 'Branch or tag of hyperswitch repository (e.g., main, develop, v1.118.0). If not specified, uses latest tag by commit date.'
         required: false
         type: string
 
@@ -34,19 +34,39 @@ jobs:
             REF="${{ inputs.hyperswitch_branch }}"
             echo "Using user-specified branch/tag: $REF"
           else
-            # Fetch latest dated tag from hyperswitch repository (format: YYYY.MM.DD.X)
-            echo "Fetching latest dated tag from hyperswitch repository..."
-            REF=$(curl -s "https://api.github.com/repos/juspay/hyperswitch/tags" | \
-                  grep '"name":' | \
-                  cut -d'"' -f4 | \
-                  grep -E '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$' | \
-                  sort -V | \
-                  tail -1)
-            if [ -z "$REF" ]; then
-              echo "Failed to fetch latest dated tag, falling back to main"
+            # Fetch latest tag from hyperswitch repository using GraphQL API
+            echo "Fetching latest tag from hyperswitch repository using GraphQL API..."
+
+            # GraphQL query to get the most recent tag by commit date
+            QUERY='query {
+              repository(owner: "juspay", name: "hyperswitch") {
+                refs(
+                  refPrefix: "refs/tags/"
+                  first: 1
+                  orderBy: {field: TAG_COMMIT_DATE, direction: DESC}
+                ) {
+                  edges {
+                    node {
+                      name
+                    }
+                  }
+                }
+              }
+            }'
+
+            # Execute GraphQL query
+            REF=$(curl -s -H "Authorization: bearer ${{ secrets.GITHUB_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      -X POST \
+                      -d "{\"query\":\"$(echo "$QUERY" | tr '\n' ' ' | sed 's/"/\\"/g')\"}" \
+                      https://api.github.com/graphql | \
+                  jq -r '.data.repository.refs.edges[0].node.name')
+
+            if [ -z "$REF" ] || [ "$REF" = "null" ]; then
+              echo "Failed to fetch latest tag via GraphQL, falling back to main"
               REF="main"
             else
-              echo "Using latest dated tag: $REF"
+              echo "Using latest tag from GraphQL: $REF"
             fi
           fi
           echo "target_ref=$REF" >> $GITHUB_OUTPUT
