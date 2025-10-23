@@ -1,55 +1,118 @@
-name: Sync Integration Configs
+name: Sync Configuration Files
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Daily at 6 AM UTC
+    # Run daily at 6:00 AM UTC
+    - cron: '0 6 * * *'
   workflow_dispatch:
+    # Allow manual triggering
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync-configs:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
+      - name: Clone hyperswitch repository
+        uses: actions/checkout@v4
+        with:
+          repository: juspay/hyperswitch
+          path: hyperswitch-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Install dependencies
-      run: |
-        npm install yaml @iarna/toml
+      - name: Create target directory if it doesn't exist
+        run: |
+          mkdir -p charts/incubator/hyperswitch-app/configs
 
-    - name: Sync TOML config
-      run: |
-        # Fetch TOML content
-        curl -sL "https://raw.githubusercontent.com/juspay/hyperswitch/main/config/deployments/integration_test.toml" > integration_test.toml
+      - name: Copy configuration files
+        run: |
+          # Copy files from hyperswitch repo to our repo
+          cp hyperswitch-repo/config/deployments/integration_test.toml charts/incubator/hyperswitch-app/configs/router-integ.toml
+          cp hyperswitch-repo/config/deployments/sandbox.toml charts/incubator/hyperswitch-app/configs/router-sandbox.toml
+          cp hyperswitch-repo/config/deployments/production.toml charts/incubator/hyperswitch-app/configs/router-production.toml
 
-        # Update YAML file
-        node -e "
-        const fs = require('fs');
-        const YAML = require('yaml');
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes detected"
+            echo "changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected"
+            echo "changes=true" >> $GITHUB_OUTPUT
+          fi
 
-        const tomlContent = fs.readFileSync('integration_test.toml', 'utf8');
-        const yamlContent = YAML.parse(fs.readFileSync('configs/hyperswitch-app/additional-configs/integ-values.yaml', 'utf8')) || {};
+      - name: Generate dated tag
+        id: generate_tag
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          DATE=$(date +%Y.%m.%d)
 
-        yamlContent.server = yamlContent.server || {};
-        yamlContent.server.additional_configs = tomlContent;
+          # Get existing tags for today
+          EXISTING_TAGS=$(git tag -l "${DATE}.*" | sort -V)
 
-        fs.writeFileSync('configs/hyperswitch-app/additional-configs/integ-values.yaml', YAML.stringify(yamlContent, { indent: 2 }));
-        "
+          if [ -z "$EXISTING_TAGS" ]; then
+            # No tags for today, start with .0
+            NEW_TAG="${DATE}.0"
+          else
+            # Get the highest increment for today
+            HIGHEST_TAG=$(echo "$EXISTING_TAGS" | tail -1)
+            INCREMENT=$(echo "$HIGHEST_TAG" | cut -d'.' -f4)
+            NEW_INCREMENT=$((INCREMENT + 1))
+            NEW_TAG="${DATE}.${NEW_INCREMENT}"
+          fi
 
-    - name: Commit changes
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add configs/hyperswitch-app/additional-configs/integ-values.yaml
-        git diff --staged --quiet || git commit -m "chore: sync integration configs"
-        git push
+          echo "Generated tag: $NEW_TAG"
+          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+
+      - name: Configure Git
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          git add charts/incubator/hyperswitch-app/configs/
+          git commit -m "chore: sync configuration files from hyperswitch repository
+
+          - Updated router-integ.toml from integration_test.toml
+          - Updated router-sandbox.toml from sandbox.toml
+          - Updated router-production.toml from production.toml
+
+          Source: https://github.com/juspay/hyperswitch/tree/main/config/deployments
+          Tag: ${{ steps.generate_tag.outputs.tag }}"
+
+      - name: Create and push tag
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          git tag "${{ steps.generate_tag.outputs.tag }}"
+          git push origin HEAD --tags
+
+      - name: Cleanup
+        run: |
+          rm -rf hyperswitch-repo
+
+      - name: Summary
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          echo "✅ Configuration files synced successfully!"
+          echo "📁 Files updated:"
+          echo "   - charts/incubator/hyperswitch-app/configs/router-integ.toml"
+          echo "   - charts/incubator/hyperswitch-app/configs/router-sandbox.toml"
+          echo "   - charts/incubator/hyperswitch-app/configs/router-production.toml"
+          echo "🏷️  Tagged with: ${{ steps.generate_tag.outputs.tag }}"
+
+      - name: No changes summary
+        if: steps.check_changes.outputs.changes == 'false'
+        run: |
+          echo "ℹ️  No changes detected - configuration files are already up to date"
