@@ -39,6 +39,10 @@ jobs:
           cp hyperswitch-repo/config/deployments/sandbox.toml charts/incubator/hyperswitch-app/configs/router-sandbox.toml
           cp hyperswitch-repo/config/deployments/production.toml charts/incubator/hyperswitch-app/configs/router-production.toml
 
+      - name: Cleanup hyperswitch repository
+        run: |
+          rm -rf hyperswitch-repo
+
       - name: Check for changes
         id: check_changes
         run: |
@@ -101,10 +105,6 @@ jobs:
         run: |
           git tag "${{ steps.generate_tag.outputs.tag }}"
           git push origin HEAD --tags
-
-      - name: Cleanup
-        run: |
-          rm -rf hyperswitch-repo
 
       - name: Summary
         if: steps.check_changes.outputs.changes == 'true'
