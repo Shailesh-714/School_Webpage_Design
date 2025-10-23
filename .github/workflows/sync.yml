@@ -79,6 +79,37 @@ jobs:
           ref: ${{ steps.determine_ref.outputs.target_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Update service versions in values.yaml
+        run: |
+          SOURCE_REF="${{ steps.determine_ref.outputs.target_ref }}"
+          VALUES_FILE="charts/incubator/hyperswitch-app/values.yaml"
+
+          echo "Updating service versions with hyperswitch reference: $SOURCE_REF"
+
+          # Update versions for router, consumer, producer, and drainer services
+          # Format: service-{hyperswitch_tag}
+          sed -i.bak "s/version: v[0-9]*\.[0-9]*\.[0-9]*$/version: router-$SOURCE_REF/" $VALUES_FILE
+
+          # Update each service specifically to avoid conflicts
+          # Router version (around line 6)
+          sed -i "/services:/,/consumer:/ { s/version: v[0-9]*\.[0-9]*\.[0-9]*$/version: router-$SOURCE_REF/; }" $VALUES_FILE
+
+          # Consumer version (around line 20)
+          sed -i "/consumer:/,/producer:/ { s/version: v[0-9]*\.[0-9]*\.[0-9]*$/version: consumer-$SOURCE_REF/; }" $VALUES_FILE
+
+          # Producer version (around line 31)
+          sed -i "/producer:/,/drainer:/ { s/version: v[0-9]*\.[0-9]*\.[0-9]*$/version: producer-$SOURCE_REF/; }" $VALUES_FILE
+
+          # Drainer version (around line 42)
+          sed -i "/drainer:/,/controlCenter:/ { s/version: v[0-9]*\.[0-9]*\.[0-9]*$/version: drainer-$SOURCE_REF/; }" $VALUES_FILE
+
+          # Clean up backup file
+          rm -f $VALUES_FILE.bak
+
+          echo "Service versions updated successfully"
+          echo "Changes made to $VALUES_FILE:"
+          git diff $VALUES_FILE || echo "No changes detected in values.yaml"
+
       - name: Create target directory if it doesn't exist
         run: |
           mkdir -p charts/incubator/hyperswitch-app/configs
