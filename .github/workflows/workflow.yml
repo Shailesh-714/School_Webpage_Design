@@ -1,5 +1,5 @@
 name: Deploy Hyperswitch App
-run-name: "${{ inputs.environment }} Deployment: Hyperswitch App-${{ inputs.version_tag }}"
+run-name: "Deploy: Hyperswitch App - ${{ inputs.version_tag }} (${{ inputs.environment }})"
 
 on:
   workflow_dispatch:
@@ -9,9 +9,9 @@ on:
         required: true
         type: choice
         options:
-        - 'integ'
-        - 'sandbox'
-        default: 'integ'
+        - 'Integ'
+        - 'Sandbox'
+        default: 'Integ'
       version_tag:
         description: 'Version Tag'
         required: true
