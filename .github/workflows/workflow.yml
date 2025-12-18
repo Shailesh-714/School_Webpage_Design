@@ -22,8 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      - name: Install yq
+      - name: install yq
         run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
+            wget -qO yq https://github.com/mikefarah/yq/releases/download/v4.44.2/yq_linux_amd64
+            chmod +x yq
 
+      - name: check
+        run: |
+            yq -v
+            
