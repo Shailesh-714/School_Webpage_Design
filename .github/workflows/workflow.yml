@@ -29,5 +29,5 @@ jobs:
 
       - name: check
         run: |
-            yq -v
+            yq -Poy sample.json
             
