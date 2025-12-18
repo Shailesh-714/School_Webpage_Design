@@ -24,7 +24,7 @@ jobs:
 
       - name: install yq
         run: |
-            wget -qO yq https://github.com/mikefarah/yq/releases/download/v4.44.2/yq_${{ runner.os }}_${{ runner.arch}}
+            wget -qO yq https://github.com/mikefarah/yq/releases/download/v4.44.2/yq_${{ .Os }}_${{ .Arch }}
             chmod +x yq
 
       - name: check
