@@ -24,8 +24,10 @@ jobs:
 
       - name: install yq
         run: |
-            wget -qO yq https://github.com/mikefarah/yq/releases/download/v4.44.2/yq_${{ .Os }}_${{ .Arch }}
-            chmod +x yq
+            mkdir -p ${{ github.workspace }}/bin
+            wget -qO ${{ github.workspace }}/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.2/yq_linux_amd64
+            chmod +x ${{ github.workspace }}/bin/yq
+            echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
 
       - name: check
         run: |
