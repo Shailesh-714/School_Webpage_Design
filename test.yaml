@@ -7,6 +7,8 @@ global:
   # Global image registry override (optional)
   imageRegistry: ""
 
+$tfstate:
+  - istio: s3://hyperswitch-sandbox-terraform-state/sandbox/eu-central-1/apps/istio/terraform.tfstate
 # Hyperswitch Dependent Services
 dependencies:
   # Hyperswitch Router configuration
