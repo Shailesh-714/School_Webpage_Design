@@ -41,7 +41,7 @@ terminationGracePeriodSeconds: 30
 
 # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
 image:
-  registry: $<istio.lb_security_group_id>$
+  registry: '$<istio.lb_security_group_id>$'
   repository: juspaydotin/hyperswitch-control-center
   # This sets the pull policy for images.
   pullPolicy: IfNotPresent
